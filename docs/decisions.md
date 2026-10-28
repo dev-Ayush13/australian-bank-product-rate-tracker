@@ -2,29 +2,63 @@
 
 Each significant design decision and data-source check, newest first.
 
-## DR-003 — Request settings for bank product APIs
+## DR-005 — Database firewall access for the scheduled collector
 
 **Date:** 2026-10-28 · **Status:** Accepted
 
-**Context:** A first collection from the big four returned complete data for CommBank, NAB and ANZ, but Westpac returned HTTP 200 with zero products and `totalRecords: 0`, with no error. Testing showed two separate triggers, each producing the same silent empty response from Westpac:
+**Context:** The Azure SQL server firewall only admits listed IP addresses. GitHub-hosted runners get a different IP address on every run.
 
-| Request | Westpac result |
-|---|---|
-| `page-size=99` or less, `Accept: application/json` | 65 products |
-| `page-size=100` (any headers) | 0 products |
-| `Accept: */*` with `Accept-Encoding: gzip` (Python `requests` defaults) | 0 products |
+**Decision:** Each workflow run signs in to Azure with OpenID Connect (no stored Azure credential), adds a firewall rule for its own IP address, runs the collection and load, then deletes the rule in a step that runs even if earlier steps fail. The workflow identity trusts only this repository's `main` branch and has rights to manage firewall rules on this one SQL server only. The database login password is held in GitHub Actions secrets.
 
-The product list and product detail endpoints also use different versions (list v5, detail v7 at CommBank, NAB, ANZ and Westpac on 2026-10-28), and banks reject unsupported versions with HTTP 406.
+**Alternatives considered:**
+- "Allow Azure services and resources to access this server": admits any Azure customer's resources, and GitHub runners being covered is not guaranteed.
+- Allow all IP addresses (`0.0.0.0`–`255.255.255.255`): exposes the login to the whole internet.
+- Self-hosted runner: needs a machine left on. Static-IP runners: paid plans only.
+
+**Consequences:** The database is reachable from a runner only for the duration of a run. One-off identity setup in Azure. New firewall rules can take a short time to apply, so the first database connection retries.
+
+## DR-004 — Raw response storage
+
+**Date:** 2026-10-28 · **Status:** Accepted
+
+**Context:** Every number must be traceable to the response a bank published, but GitHub runners are discarded after each run. A one-day sample of the big four was 2.6 MB uncompressed (0.2 MB gzip). Most products do not change from day to day, and `lastUpdated` cannot be used to detect change: on 2026-10-28, 28 of 42 CommBank and 30 of 33 Westpac in-scope products showed that day's date, while ANZ and NAB showed batch changes on 8–9 October.
+
+**Decision:** Store raw responses in the Azure SQL database, compressed, and only when a response's content differs from the last stored version (compared by hash). Record a fetch log row for every request every day (date, bank, product, status, hash), so each day's response can be traced to the stored version it matched.
+
+**Alternatives considered:**
+- Commit raw files to the repository daily: daily automated commits and a growing repository.
+- Azure Blob Storage: free for the first 12 months only, and a second service to manage.
+- Store every response every day: same traceability at many times the storage.
+
+**Consequences:** Change detection is based on content, not on banks' `lastUpdated`. A day with no fetch log row is a gap. If the database is unavailable (for example, paused at the free monthly limit), that day's responses are not stored, and the run must fail visibly.
+
+## DR-003 — Request settings for bank product APIs
+
+**Date:** 2026-10-28 · **Status:** Accepted (revised 2026-10-28 after the first full collection)
+
+**Context:** The first full collection (116 brands, 2026-10-28) showed four kinds of unreliable response:
+
+| Behaviour | Example | Evidence |
+|---|---|---|
+| HTTP 200 with zero products and `totalRecords: 0`, at random | Westpac, St.George | Uncached Westpac requests on page sizes 21–23: two returned 65 products, one returned 0 |
+| Empty responses cached by the bank's CDN for several minutes | Westpac (CloudFront) | Repeated requests returned the same empty response with `X-Cache: Hit from cloudfront`, `Age` 314–401 s |
+| Version range rejected; exact versions accepted | Revolut | `x-v: 10` + `x-min-v: 1` → HTTP 406; `x-v: 5` → 200 |
+| HTTP 200 with an error body instead of a product | Tyro Banking (1 product) | Body `errorCode: ERR_ACCOUNT_PERM_UNAVAILABLE` |
+
+An earlier diagnosis attributed Westpac's empty responses to `page-size=100` and to `Accept: */*` with gzip. Uncached testing disproved it: `page-size=100` returned all 65 products. Those results were random empty responses, some of them served from the CDN cache.
+
+Product list and detail endpoints use different versions (most brands: list v5, detail v7; 8 brands use older versions), and banks reject unsupported versions with HTTP 406.
 
 **Decision:**
-- Send `Accept: application/json` on every request.
-- Use `page-size=25`, the standard's default, which every bank must support.
-- Send a version range (`x-min-v: 1`, `x-v: 10`) and let each bank answer with its highest supported version; record the version returned in the `x-v` response header.
-- Flag any bank whose collected product count is zero or differs from its `totalRecords`.
+- Send `Accept: application/json` and a version range (`x-min-v: 1`, `x-v: 10`); if a bank returns 406, try exact versions from 9 down to 1 and keep the first that works for that bank and endpoint. Record the version returned in the `x-v` response header.
+- Request lists with `page-size=25`. If a list is empty, its count differs from `totalRecords`, or paging fails after page 1, retry the whole list with page sizes 24, 23 and 22 (each is a separate CDN cache entry, so the retry reaches the bank's server). Record the number of attempts.
+- Label a bank `empty` only when all four attempts return zero products; `count_mismatch` when counts still differ.
+- Reject a detail response that contains no `productId` and log it as a failed product.
+- One bank's or product's failure is logged with its HTTP status and does not stop the run.
 
-**Alternatives considered:** A hard-coded version per bank and endpoint (breaks whenever a bank upgrades); a larger page size to reduce requests (fails silently at Westpac).
+**Alternatives considered:** A hard-coded version per bank and endpoint (breaks whenever a bank upgrades); cache-busting query parameters (non-standard parameters may be rejected); accepting a single response per bank (randomly drops Westpac-group brands).
 
-**Consequences:** A few more page requests per bank. Silent empty responses are caught instead of being loaded as "bank has no products". Responses may arrive in different versions across banks, so flattening must handle each version recorded.
+**Consequences:** Up to three extra list requests for an unreliable bank. In a test run, Westpac needed 3 attempts and St.George 2. List attempts per bank become a data-quality measure (Q11). Responses arrive in several versions, so flattening must handle each version recorded.
 
 ## DR-002 — Business questions the data can support
 
