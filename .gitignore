@@ -10,8 +10,7 @@ __pycache__/
 venv/
 
 # Raw daily API data (large; kept locally and in the database, samples go in data/sample/)
-data/raw/*
-!data/raw/.gitkeep
+data/raw/
 
 # Power BI temporary files
 *.pbix.bak

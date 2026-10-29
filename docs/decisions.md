@@ -44,7 +44,7 @@ Each significant design decision and data-source check, newest first.
 - The collector writes `_fetch_log.json` (status, version, UTC time, file or error per request). A partial re-run replaces only the brands it re-ran in that day's summary and fetch log.
 - `src/load_raw.py <date>` loads a day in one transaction: new responses only, then replaces that day's fetch log and run rows, so a day can be reloaded without duplicates.
 - A detail response without a product (Tyro's error body) is kept and logged with an error, not discarded.
-- 28 and 29 October were collected before the fetch log existed; `src/backfill_fetch_log.py` rebuilt it from the saved files and run summaries. For those days: times are file times; versions are per brand; status codes of failed requests are blank where the summary recorded only the error type; failed list attempts before a successful retry are not recorded. On 28 October the summary of the last retest was merged into the full-run summary (original kept), and Revolut, which failed in the full run but was collected by an earlier retest whose summary was overwritten, was rebuilt from its files (11/11 products, 9 in scope).
+- 28 and 29 October were collected before the fetch log existed; a one-off script (`src/backfill_fetch_log.py`, removed after use; see commits `5fe0a4f` and `e8bc9a9`) rebuilt it from the saved files and run summaries. For those days: times are file times; versions are per brand; status codes of failed requests are blank where the summary recorded only the error type; failed list attempts before a successful retry are not recorded. On 28 October the summary of the last retest was merged into the full-run summary (original kept), and Revolut, which failed in the full run but was collected by an earlier retest whose summary was overwritten, was rebuilt from its files (11/11 products, 9 in scope).
 - First load (2026-10-28): 3,153 distinct responses (33.9 MB raw, 6.1 MB compressed), 3,165 fetch log rows (12 errors), 116 brands. Reloading the same day added no responses.
 - Second day (2026-10-29): 476 of 3,111 distinct responses were new; 85% were identical to the previous day.
 - The paused database can take longer than the 90-second login timeout to resume, so the loader retries the connection up to three times.
@@ -68,10 +68,16 @@ Product list and detail endpoints use different versions (most brands: list v5, 
 
 **Decision:**
 - Send `Accept: application/json` and a version range (`x-min-v: 1`, `x-v: 10`); if a bank returns 406, try exact versions from 9 down to 1 and keep the first that works for that bank and endpoint. Record the version returned in the `x-v` response header.
-- Request lists with `page-size=25`. If a list is empty, its count differs from `totalRecords`, or paging fails after page 1, retry the whole list with page sizes 24, 23 and 22 (each is a separate CDN cache entry, so the retry reaches the bank's server). Record the number of attempts.
+- Request lists with `page-size=25`. If a list is empty, its count differs from `totalRecords`, or paging fails after page 1, retry the whole list with other page sizes (each is a separate CDN cache entry, so the retry reaches the bank's server; sizes revised below). Record the number of attempts.
 - Label a bank `empty` only when all four attempts return zero products; `count_mismatch` when counts still differ.
 - Reject a detail response that contains no `productId` and log it as a failed product (the response itself is kept; see DR-004).
 - One bank's or product's failure is logged with its HTTP status and does not stop the run.
+
+**Revision (2026-10-30): repeated entries hide products.** Some banks' page 2 repeats items from page 1, so the entry count matches `totalRecords` while products are missing. On 28 and 29 October: Defence Bank 14 of 52 products missing (12 in scope: most of its home loan range), St.George 1 of 42 (Incentive Saver), Westpac 2–3 of 65 (none in scope); all repeated entries were identical. A single page (`page-size=100`) returned every product for all three. Changes:
+- A list is complete only when the number of distinct `productId`s equals `totalRecords`. Repeated entries are collapsed before details are fetched; the raw list pages keep them as received.
+- List retries use page sizes 100, 99 and 98 (one large page avoids the faulty paging; each size is still a separate CDN cache entry).
+- Any failed list request, including on page 1, moves on to the next attempt. On 30 October AMP (HTTP 400) and Geelong Bank (HTTP 520) failed on page 1 in the scheduled run and returned their full lists a few hours later.
+- The 28 and 29 October snapshots for these brands are incomplete and are not repaired. The 30 October snapshot for Defence Bank, St.George, Westpac, AMP and Geelong Bank comes from a same-day re-run with these changes (Defence Bank 52 of 52 products, St.George 42 of 42).
 
 **Alternatives considered:** A hard-coded version per bank and endpoint (breaks whenever a bank upgrades); cache-busting query parameters (non-standard parameters may be rejected); accepting a single response per bank (randomly drops Westpac-group brands).
 

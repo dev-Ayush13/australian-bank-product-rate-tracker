@@ -13,7 +13,7 @@ from urllib3.util.retry import Retry
 RAW_DIR = Path(__file__).resolve().parents[1] / "data" / "raw"
 IN_SCOPE = {"RESIDENTIAL_MORTGAGES", "TRANS_AND_SAVINGS_ACCOUNTS", "TERM_DEPOSITS"}
 VERSION_RANGE = {"x-v": "10", "x-min-v": "1"}
-LIST_PAGE_SIZES = (25, 24, 23, 22)  # each size is a separate CDN cache entry, so a retry reaches the bank's server
+LIST_PAGE_SIZES = (25, 100, 99, 98)  # retries avoid broken paging (one large page) and are separate CDN cache entries
 
 register_file = max((RAW_DIR / "register").glob("*.json"))
 brands = json.loads(register_file.read_text(encoding="utf-8"))["data"]
@@ -72,13 +72,14 @@ def fetch_list(base, brand_dir, versions):
                 if next_url == url:
                     raise ValueError("next link repeats the current page")
                 url = next_url
-        except requests.HTTPError:
-            if page == 1 or attempt == len(LIST_PAGE_SIZES):
+        except requests.RequestException:  # includes page 1: short bank outages recover on a later attempt
+            if attempt == len(LIST_PAGE_SIZES):
                 raise
             continue
         total = body["meta"].get("totalRecords")
-        if (products and len(products) == total) or attempt == len(LIST_PAGE_SIZES):
-            return products, total, version, attempt
+        unique = list({p["productId"]: p for p in products}.values())  # some banks repeat page 1 items on page 2, hiding others
+        if (unique and len(unique) == total) or attempt == len(LIST_PAGE_SIZES):
+            return unique, total, version, attempt
 
 
 def describe(e):
