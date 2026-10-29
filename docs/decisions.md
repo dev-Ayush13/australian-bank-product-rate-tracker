@@ -17,6 +17,13 @@ Each significant design decision and data-source check, newest first.
 
 **Consequences:** The database is reachable from a runner only for the duration of a run. One-off identity setup in Azure. New firewall rules can take a short time to apply, so the first database connection retries.
 
+**Implementation (2026-10-29):**
+- User-assigned managed identity with a federated credential (`infra/setup_github_access.sh`). GitHub's OIDC subject includes the owner and repository IDs (`repo:dev-Ayush13@26853697/australian-bank-product-rate-tracker@1436536342:ref:refs/heads/main`); a subject without the IDs was rejected (AADSTS700213). With the IDs, a recreated repository of the same name is not trusted.
+- Custom role with only `Microsoft.Sql/servers/firewallRules/read|write|delete`, assigned on the SQL server.
+- The workflow loads as a database user `loader` (`sql/02_create_loader_user.sql`): SELECT and INSERT on schema `raw`, DELETE on `raw.fetch_log` and `raw.collection_run` only. The admin login is not used by the workflow.
+- The workflow signs in to Azure after collection, so the firewall rule exists only during the load. Raw files are kept as a workflow artifact for 7 days, so a failed load can be loaded by hand.
+- First successful run (2026-10-29): 81 minutes; the first database connection timed out while the database resumed and the retry succeeded; the rule was deleted at the end.
+
 ## DR-004 — Raw response storage
 
 **Date:** 2026-10-28 · **Status:** Accepted

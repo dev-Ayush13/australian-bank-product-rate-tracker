@@ -56,6 +56,7 @@ if retest_file.exists():
             print(f"Rebuilt from retest files: {row['brand_name']} {status} {len(products)}/{total} in-scope {in_scope}")
     summary_file.write_text(json.dumps(summary, indent=1), encoding="utf-8")
 
+run_time = utc((full_run_file if full_run_file.exists() else summary_file).stat().st_mtime)  # the merged summary is rewritten above
 log = []
 for row in summary:
     brand_id, brand_dir = row["brand_id"], day_dir / row["brand_id"]
@@ -66,7 +67,7 @@ for row in summary:
     for f in (brand_dir / "detail").glob("*.json"):
         entries[f"detail/{unquote(f.stem)}"] = (f, row.get("detail_version"))
     files = [f for f, _ in entries.values()]
-    brand_time = utc(max(f.stat().st_mtime for f in files)) if files else utc(summary_file.stat().st_mtime)
+    brand_time = utc(max(f.stat().st_mtime for f in files)) if files else run_time
     for key, (f, version) in entries.items():
         log.append({"source_id": brand_id, "request_key": key, "fetched_at": utc(f.stat().st_mtime), "http_status": 200,
                     "api_version": version, "file": f.relative_to(day_dir).as_posix()})
