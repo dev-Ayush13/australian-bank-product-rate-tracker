@@ -1,0 +1,80 @@
+name: Daily collection
+
+on:
+  schedule:
+    - cron: "17 19 * * *"  # 19:17 UTC = early morning in Sydney; off the hour, when GitHub queues are busy
+  workflow_dispatch:
+
+permissions:
+  id-token: write  # OIDC token for the Azure login (DR-005)
+  contents: read
+
+concurrency:
+  group: daily-collection
+
+env:
+  TZ: Australia/Sydney  # snapshot date is the Sydney date, as for runs on the PC
+  RG: rg-bank-tracker
+  SQL_SERVER: ayush-bank-tracker-sql
+  AZURE_SQL_SERVER: ayush-bank-tracker-sql.database.windows.net
+  AZURE_SQL_DATABASE: bank_tracker
+  AZURE_SQL_USER: loader
+
+jobs:
+  collect-and-load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ODBC Driver 18 if missing
+        run: |
+          if ! odbcinst -q -d -n "ODBC Driver 18 for SQL Server" > /dev/null 2>&1; then
+            curl -sSL -O "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb"
+            sudo dpkg -i packages-microsoft-prod.deb
+            sudo apt-get update
+            sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18
+          fi
+
+      - run: pip install -r requirements.txt
+
+      - name: Collect Register
+        run: python -u src/get_register.py
+
+      - name: Collect products
+        run: python -u src/get_products.py
+
+      - name: Keep raw files for 7 days (to reload by hand if the load fails)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: raw-${{ github.run_id }}
+          path: data/raw/
+          retention-days: 7
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Open firewall for this runner only
+        id: firewall
+        run: |
+          ip=$(curl -sSf https://api.ipify.org)
+          az sql server firewall-rule create -g "$RG" -s "$SQL_SERVER" -n "github-run-${{ github.run_id }}" \
+            --start-ip-address "$ip" --end-ip-address "$ip" -o none
+
+      - name: Load into Azure SQL
+        env:
+          AZURE_SQL_PASSWORD: ${{ secrets.AZURE_SQL_PASSWORD }}
+        run: python -u src/load_raw.py
+
+      - name: Close firewall
+        if: always() && steps.firewall.outcome != 'skipped'
+        run: az sql server firewall-rule delete -g "$RG" -s "$SQL_SERVER" -n "github-run-${{ github.run_id }}"
