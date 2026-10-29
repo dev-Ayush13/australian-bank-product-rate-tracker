@@ -32,6 +32,16 @@ Each significant design decision and data-source check, newest first.
 
 **Consequences:** Change detection is based on content, not on banks' `lastUpdated`. A day with no fetch log row is a gap. If the database is unavailable (for example, paused at the free monthly limit), that day's responses are not stored, and the run must fail visibly.
 
+**Implementation (2026-10-29):**
+- Tables: `raw.response` (SHA-256 of the exact bytes received, gzip body), `raw.fetch_log` (one row per request per day; each row has a response hash, an error, or both), `raw.collection_run` (one outcome per brand per day). Script: `sql/01_create_raw_tables.sql`.
+- The collector writes `_fetch_log.json` (status, version, UTC time, file or error per request). A partial re-run replaces only the brands it re-ran in that day's summary and fetch log.
+- `src/load_raw.py <date>` loads a day in one transaction: new responses only, then replaces that day's fetch log and run rows, so a day can be reloaded without duplicates.
+- A detail response without a product (Tyro's error body) is kept and logged with an error, not discarded.
+- 28 and 29 October were collected before the fetch log existed; `src/backfill_fetch_log.py` rebuilt it from the saved files and run summaries. For those days: times are file times; versions are per brand; status codes of failed requests are blank where the summary recorded only the error type; failed list attempts before a successful retry are not recorded. On 28 October the summary of the last retest was merged into the full-run summary (original kept), and Revolut, which failed in the full run but was collected by an earlier retest whose summary was overwritten, was rebuilt from its files (11/11 products, 9 in scope).
+- First load (2026-10-28): 3,153 distinct responses (33.9 MB raw, 6.1 MB compressed), 3,165 fetch log rows (12 errors), 116 brands. Reloading the same day added no responses.
+- Second day (2026-10-29): 476 of 3,111 distinct responses were new; 85% were identical to the previous day.
+- The paused database can take longer than the 90-second login timeout to resume, so the loader retries the connection up to three times.
+
 ## DR-003 — Request settings for bank product APIs
 
 **Date:** 2026-10-28 · **Status:** Accepted (revised 2026-10-28 after the first full collection)
@@ -53,7 +63,7 @@ Product list and detail endpoints use different versions (most brands: list v5, 
 - Send `Accept: application/json` and a version range (`x-min-v: 1`, `x-v: 10`); if a bank returns 406, try exact versions from 9 down to 1 and keep the first that works for that bank and endpoint. Record the version returned in the `x-v` response header.
 - Request lists with `page-size=25`. If a list is empty, its count differs from `totalRecords`, or paging fails after page 1, retry the whole list with page sizes 24, 23 and 22 (each is a separate CDN cache entry, so the retry reaches the bank's server). Record the number of attempts.
 - Label a bank `empty` only when all four attempts return zero products; `count_mismatch` when counts still differ.
-- Reject a detail response that contains no `productId` and log it as a failed product.
+- Reject a detail response that contains no `productId` and log it as a failed product (the response itself is kept; see DR-004).
 - One bank's or product's failure is logged with its HTTP status and does not stop the run.
 
 **Alternatives considered:** A hard-coded version per bank and endpoint (breaks whenever a bank upgrades); cache-busting query parameters (non-standard parameters may be rejected); accepting a single response per bank (randomly drops Westpac-group brands).
