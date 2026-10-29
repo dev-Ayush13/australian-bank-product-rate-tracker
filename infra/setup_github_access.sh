@@ -7,7 +7,7 @@ RG=rg-bank-tracker
 SQL_SERVER=ayush-bank-tracker-sql
 IDENTITY=id-bank-tracker-github
 ROLE="SQL firewall rule operator (bank tracker)"
-REPO=dev-Ayush13/australian-bank-product-rate-tracker
+REPO="dev-Ayush13@26853697/australian-bank-product-rate-tracker@1436536342"  # GitHub's OIDC subject includes owner and repo IDs, so a recreated repo with the same name is not trusted
 
 SUB_ID=$(az account show --query id -o tsv)
 SERVER_ID=$(az sql server show -g "$RG" -n "$SQL_SERVER" --query id -o tsv)
@@ -32,7 +32,7 @@ for attempt in 1 2 3 4 5 6; do  # a new role can take a minute to become usable
 done
 
 #3. Trust tokens from GitHub Actions only for this repo's main branch
-az identity federated-credential create -o none -g "$RG" --identity-name "$IDENTITY" -n github-main \
+az identity federated-credential create -o none  # use "update" if github-main already exists -g "$RG" --identity-name "$IDENTITY" -n github-main \
   --issuer https://token.actions.githubusercontent.com \
   --subject "repo:$REPO:ref:refs/heads/main" \
   --audiences api://AzureADTokenExchange

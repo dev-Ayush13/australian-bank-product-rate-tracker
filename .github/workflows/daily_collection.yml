@@ -22,7 +22,7 @@ env:
 
 jobs:
   collect-and-load:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned: the ODBC driver package must exist for the Ubuntu version
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v5
@@ -51,13 +51,13 @@ jobs:
 
       - name: Keep raw files for 7 days (to reload by hand if the load fails)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: raw-${{ github.run_id }}
           path: data/raw/
           retention-days: 7
 
-      - uses: azure/login@v2
+      - uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
