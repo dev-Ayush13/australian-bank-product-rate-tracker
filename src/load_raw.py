@@ -75,10 +75,12 @@ try:
     cur.execute("DELETE FROM raw.collection_run WHERE run_date = ?", run_date)
     cur.executemany("INSERT INTO raw.fetch_log VALUES (?, ?, ?, ?, ?, ?, ?, ?)", fetch_rows)
     cur.executemany("INSERT INTO raw.collection_run VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", run_rows)
+    conn.commit()  # raw is saved before parsing, so a parsing failure cannot lose the day
+    print(f"{run_date}: responses {len(responses)} distinct, {new_responses} new, {len(responses) - new_responses} already stored "
+          f"({sum(n for _, n in responses.values()) / 1e6:.1f} MB raw, {sum(len(gz) for gz, _ in responses.values()) / 1e6:.1f} MB compressed) "
+          f"| fetch log {len(fetch_rows)} rows, {sum(r[6] is not None for r in fetch_rows)} errors | brands {len(run_rows)}", flush=True)
+    products, rates, rejected = cur.execute("EXEC stg.parse_new_responses").fetchone()
     conn.commit()
+    print(f"staging: {products} new products parsed, {rates} rates, {rejected} rates held back")
 finally:
     conn.close()
-
-print(f"{run_date}: responses {len(responses)} distinct, {new_responses} new, {len(responses) - new_responses} already stored "
-      f"({sum(n for _, n in responses.values()) / 1e6:.1f} MB raw, {sum(len(gz) for gz, _ in responses.values()) / 1e6:.1f} MB compressed) "
-      f"| fetch log {len(fetch_rows)} rows, {sum(r[6] is not None for r in fetch_rows)} errors | brands {len(run_rows)}")

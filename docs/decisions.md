@@ -2,6 +2,24 @@
 
 Each significant design decision and data-source check, newest first.
 
+## DR-006 — Staging layer and cleaning rules
+
+**Date:** 2026-10-30 · **Status:** Accepted
+
+**Context:** Product details are nested JSON (rates contain tiers, fees contain discounts) and differ between API versions. A profile of 2,892 in-scope details from 104 brands (29 October) showed clean enumerations but: fixed terms written as both `P1Y` and `P12M`; free-text tier names ("LVR 70% up to 80%", "OVER 60-80%LVR"); LVR tiers as fractions (0.8) except three brands using whole numbers (80); one brand writing all rates as percentages; term deposit rates without a term; and 447 replies with non-ASCII characters (’ – ≥).
+
+**Decision:** Transform inside the database (ELT). The stored procedure `stg.parse_new_responses` (`sql/04_parse_responses.sql`) decompresses each product detail response not yet parsed, decodes it through a UTF-8 collated column, and splits it with `OPENJSON` into `stg` tables keyed by `response_hash` (`sql/03_create_staging_tables.sql`). It runs in one transaction, after the raw load has committed. Rules:
+- Rates are stored as fractions. A rate above 1 is held back; if any rate of a product is above 1, all its rates are held back ("product writes rates as percentages"), since its values of 1 or below would be misread.
+- Periods: years and months become `term_months`, days and weeks `term_days`; combined periods (`P1Y6M`) give no term. A term deposit rate without a term is held back.
+- Tier bounds are taken from `unitOfMeasure` and minimum/maximum values, not tier names. `PERCENT` bounds above 1 are divided by 100 and flagged (`scaled_from_percent`).
+- Older fee fields (`amount`, `balanceRate`, `transactionRate`, `accruedRate`) and newer ones (`fixedAmount`, `rateBased`, `variable`) map to the same columns.
+- A response without product id, category or name is held back whole. Every held-back value goes to `stg.reject` with its original value and reason.
+- Features and eligibility are not parsed yet; they remain in raw.
+
+**Alternatives considered:** Flattening in Python before the load (simpler to write, but the rules sit outside the data, rebuilding history needs the raw replies pulled back out, and a parsing error could stop the raw load); converting the percentage-writing brand by dividing by 100 (likely right, but rests on an inference about one bank's format).
+
+**Consequences:** Staging can be dropped and rebuilt from raw at any time. A parsing failure delays staging only. First build (28–30 October): 3,724 products, 10,980 lending rates, 10,934 deposit rates, 25,105 tiers, 37,440 fees, 1,332 discounts, 6,383 constraints; 120 rates held back (94 term deposit rates without a term, 12 above 1, 14 from products writing percentages, all of the latter two from Traditional Credit Union). Counts matched an independent Python recount. For the reporting layer: some rates are not generally available (Bankwest Easy Saver 11.5% for competition winners only), and one mortgage lists a deposit rate (The Capricornian, 9.23%); deposit rates should come from deposit products only and restricted rates should be kept out of "best rate" rankings.
+
 ## DR-005 — Database firewall access for the scheduled collector
 
 **Date:** 2026-10-28 · **Status:** Accepted
