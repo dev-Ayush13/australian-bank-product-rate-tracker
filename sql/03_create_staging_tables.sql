@@ -1,6 +1,6 @@
 --1. Schema; drop existing staging tables (children first), as staging is rebuilt from raw
 IF SCHEMA_ID('stg') IS NULL EXEC('CREATE SCHEMA stg');
-DROP TABLE IF EXISTS stg.fee_discount, stg.rate_tier, stg.rate_condition, stg.lending_rate, stg.deposit_rate, stg.fee, stg.product_constraint, stg.reject, stg.product;
+DROP TABLE IF EXISTS stg.brand, stg.fee_discount, stg.rate_tier, stg.rate_condition, stg.lending_rate, stg.deposit_rate, stg.fee, stg.product_constraint, stg.reject, stg.product;
 GO
 
 --2. Tables: one row per distinct product detail response, and its rates, tiers, fees and constraints. Rates are fractions (0.0619 = 6.19%)
@@ -48,6 +48,10 @@ CREATE TABLE stg.product_constraint (
     response_hash binary(32) REFERENCES stg.product, constraint_seq smallint, constraint_type varchar(30) NOT NULL,
     value_numeric decimal(20, 6), additional_value nvarchar(max), additional_info nvarchar(max),
     PRIMARY KEY (response_hash, constraint_seq));
+
+CREATE TABLE stg.brand (
+    response_hash binary(32), brand_id varchar(64), brand_name nvarchar(200) NOT NULL, is_interim_id bit NOT NULL,
+    public_base_uri nvarchar(400), last_updated datetimeoffset(0), PRIMARY KEY (response_hash, brand_id));
 
 CREATE TABLE stg.reject (
     reject_id int IDENTITY PRIMARY KEY, response_hash binary(32) NOT NULL, area varchar(30) NOT NULL, item_seq smallint,

@@ -5,7 +5,7 @@ FROM (SELECT TRY_CAST(SUBSTRING(@v, 2, IIF(LEN(@v) > 2, LEN(@v) - 2, 0)) AS int)
 WHERE @v LIKE 'P[0-9]%[YMWD]';
 GO
 
---2. Parse product detail responses not yet in staging, all or nothing
+--2. Parse Register and product detail responses not yet in staging, all or nothing
 CREATE OR ALTER PROCEDURE stg.parse_new_responses AS
 SET NOCOUNT, XACT_ABORT ON;
 
@@ -16,9 +16,22 @@ WHERE EXISTS (SELECT 1 FROM raw.fetch_log AS f WHERE f.response_hash = r.respons
   AND NOT EXISTS (SELECT 1 FROM stg.product AS p WHERE p.response_hash = r.response_hash)
   AND NOT EXISTS (SELECT 1 FROM stg.reject AS x WHERE x.response_hash = r.response_hash AND x.area = 'product');
 
+CREATE TABLE #reg (response_hash binary(32) PRIMARY KEY, j varchar(max) COLLATE Latin1_General_100_CI_AS_SC_UTF8);
+INSERT #reg
+SELECT r.response_hash, DECOMPRESS(r.body_gzip) FROM raw.response AS r
+WHERE EXISTS (SELECT 1 FROM raw.fetch_log AS f WHERE f.response_hash = r.response_hash AND f.source_id = 'cdr_register')
+  AND NOT EXISTS (SELECT 1 FROM stg.brand AS b WHERE b.response_hash = r.response_hash);
+
 BEGIN TRAN;
 
---2a. Products; a response without id, category or name is rejected whole
+--2a. Register brands; the key is dataHolderBrandId, else interimId
+INSERT stg.brand
+SELECT g.response_hash, COALESCE(b.dataHolderBrandId, b.interimId), b.brandName, IIF(b.dataHolderBrandId IS NULL, 1, 0), b.publicBaseUri,
+       TRY_CAST(b.lastUpdated AS datetimeoffset(0))
+FROM #reg AS g CROSS APPLY OPENJSON(g.j, '$.data') WITH (dataHolderBrandId varchar(64), interimId varchar(64), brandName nvarchar(200),
+    publicBaseUri nvarchar(400), lastUpdated varchar(40)) AS b;
+
+--2b. Products; a response without id, category or name is rejected whole
 INSERT stg.product
 SELECT d.response_hash, p.productId, p.productCategory, p.name, p.description, p.brand, TRY_CAST(p.lastUpdated AS datetimeoffset(0)),
        TRY_CAST(p.effectiveFrom AS datetimeoffset(0)), TRY_CAST(p.effectiveTo AS datetimeoffset(0)), p.isTailored
@@ -31,7 +44,7 @@ SELECT response_hash, 'product', 'missing productId, productCategory or name' FR
 WHERE NOT EXISTS (SELECT 1 FROM stg.product AS p WHERE p.response_hash = d.response_hash);
 DELETE d FROM #doc AS d WHERE NOT EXISTS (SELECT 1 FROM stg.product AS p WHERE p.response_hash = d.response_hash);
 
---2b. Lending and deposit rates with their term, and the reason when a rate is held back
+--2c. Lending and deposit rates with their term, and the reason when a rate is held back
 SELECT d.response_hash, k.kind, CAST(a.[key] AS smallint) AS rate_seq, COALESCE(r.lendingRateType, r.depositRateType) AS rate_type,
        TRY_CAST(r.rate AS decimal(12, 8)) AS rate, r.rate AS raw_rate, TRY_CAST(r.comparisonRate AS decimal(12, 8)) AS comparison_rate,
        r.loanPurpose, r.repaymentType, t.months, t.days, r.calculationFrequency, r.applicationType, r.applicationFrequency,
@@ -68,7 +81,7 @@ SELECT response_hash, IIF(kind = 'L', 'lending_rate', 'deposit_rate'), rate_seq,
        LEFT(IIF(reason LIKE 'term%', additionalValue, raw_rate), 400), reason
 FROM #rate WHERE reason IS NOT NULL;
 
---2c. Tiers and coded conditions of accepted rates; PERCENT tier values above 1 (80 rather than 0.8) are divided by 100
+--2d. Tiers and coded conditions of accepted rates; PERCENT tier values above 1 (80 rather than 0.8) are divided by 100
 INSERT stg.rate_tier
 SELECT r.response_hash, r.kind, r.rate_seq, a.[key], t.unitOfMeasure, v.mn / IIF(v.s = 1, 100, 1), v.mx / IIF(v.s = 1, 100, 1), v.s,
        t.rateApplicationMethod, t.name, t.additionalInfo
@@ -85,7 +98,7 @@ FROM #rate AS r CROSS APPLY OPENJSON(r.conditions) AS a
 CROSS APPLY OPENJSON(a.value) WITH (rateApplicabilityType varchar(40), additionalValue nvarchar(max), additionalInfo nvarchar(max)) AS c
 WHERE r.reason IS NULL;
 
---2d. Fees and their discounts; newer versions use fixedAmount / rateBased / variable, older ones amount and balance/transaction/accrued rates
+--2e. Fees and their discounts; newer versions use fixedAmount / rateBased / variable, older ones amount and balance/transaction/accrued rates
 INSERT stg.fee
 SELECT d.response_hash, a.[key], f.name, f.feeType,
        COALESCE(f.feeMethodUType, IIF(f.amount IS NOT NULL, 'fixedAmount', IIF(COALESCE(f.balanceRate, f.transactionRate, f.accruedRate) IS NOT NULL, 'rateBased', NULL))),
@@ -114,7 +127,7 @@ CROSS APPLY OPENJSON(b.value) WITH (discountType varchar(30), description nvarch
     amount varchar(40), rbRate varchar(40) '$.rateBased.rate', rbRateType varchar(20) '$.rateBased.rateType', balanceRate varchar(40),
     transactionRate varchar(40), accruedRate varchar(40), feeRate varchar(40), additionalValue nvarchar(max), additionalInfo nvarchar(max)) AS x;
 
---2e. Constraints (max LVR, minimum balance, limits)
+--2f. Constraints (max LVR, minimum balance, limits)
 INSERT stg.product_constraint
 SELECT d.response_hash, a.[key], c.constraintType, TRY_CAST(c.additionalValue AS decimal(20, 6)), c.additionalValue, c.additionalInfo
 FROM #doc AS d CROSS APPLY OPENJSON(d.j, '$.data.constraints') AS a
