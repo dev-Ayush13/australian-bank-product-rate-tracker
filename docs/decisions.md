@@ -2,6 +2,22 @@
 
 Each significant design decision and data-source check, newest first.
 
+## DR-007 — Reporting layer (mart)
+
+**Date:** 2026-10-30 · **Status:** Accepted
+
+**Context:** The report compares banks by day, segment and LVR. Within one product, several rates often share the same type, purpose, repayment, term and tier (e.g. new versus existing customer rates): 790 of about 9,400 home loan groups and 1,153 of about 8,000 deposit groups had different rates for the same features, so single rate rows can't be followed from day to day. Some rates are not generally available (tailored products, existing customers only, staff or competition rates).
+
+**Decision:** A star schema of SQL views in schema `mart` (`sql/05_create_mart_dimensions.sql`, `sql/06_create_mart_facts.sql`), read by Power BI:
+- Dimensions: `dim_bank` (latest name, banking group, segment: Big four groups, a peer group of seven national challengers, rest of market), `dim_product`, `dim_date`.
+- Facts at daily grain, built on `fact_product_day` (the request log joined to staging): `fact_lending_rate` (home loan products only), `fact_deposit_rate` (deposit products only), `fact_account_fee` (periodic fees on transaction and savings accounts, with waivers), `fact_collection`.
+- `fact_segment_rate`: per product, segment and day, the best generally available rate (lowest for loans, highest for deposits) and its change since the previous collected day. Home loans are compared at standard LVR points (60, 70, 80, 90%): a rate counts at a point if its LVR range includes it. Days without data are skipped, so an outage never shows as a change.
+- A rate is restricted if its product is tailored, it is coded `EXISTING_CUST`, or its text mentions winner, competition, employee, selected customer or existing customer. Restricted rates stay in the facts, flagged, and are left out of `fact_segment_rate`.
+
+**Alternatives considered:** Materialised fact tables (faster for very large histories, but need refresh code and can drift from staging; can be adopted later if refreshes slow down); LVR bands taken from each tier's upper bound (mislabels ranges such as 0–70% as 60–70%).
+
+**Consequences:** No data is copied; the views always reflect staging. Row counts matched independent queries, and a Westpac fixed rate product traced from the view back to its raw reply matched rate by rate (140 rates).
+
 ## DR-006 — Staging layer and cleaning rules
 
 **Date:** 2026-10-30 · **Status:** Accepted
@@ -96,7 +112,7 @@ Product list and detail endpoints use different versions (most brands: list v5, 
 - A list is complete only when the number of distinct `productId`s equals `totalRecords`. Repeated entries are collapsed before details are fetched; the raw list pages keep them as received.
 - List retries use page sizes 100, 99 and 98 (one large page avoids the faulty paging; each size is still a separate CDN cache entry).
 - Any failed list request, including on page 1, moves on to the next attempt. On 30 October AMP (HTTP 400) and Geelong Bank (HTTP 520) failed on page 1 in the scheduled run and returned their full lists a few hours later.
-- The fix applies from 31 October; the 28–30 October snapshots for these brands are incomplete and are not repaired.
+- The 28 and 29 October snapshots for these brands are incomplete and are not repaired. 30 October was collected by a manual run, with these brands re-collected the same morning using the fix; a scheduled run that started four hours late (old collector, Westpac failed with HTTP 422) had replaced it, so the complete files were loaded again.
 
 **Alternatives considered:** A hard-coded version per bank and endpoint (breaks whenever a bank upgrades); cache-busting query parameters (non-standard parameters may be rejected); accepting a single response per bank (randomly drops Westpac-group brands).
 
