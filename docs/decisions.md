@@ -13,12 +13,13 @@ Each significant design decision and data-source check, newest first.
 - Periods: years and months become `term_months`, days and weeks `term_days`; combined periods (`P1Y6M`) give no term. A term deposit rate without a term is held back.
 - Tier bounds are taken from `unitOfMeasure` and minimum/maximum values, not tier names. `PERCENT` bounds above 1 are divided by 100 and flagged (`scaled_from_percent`).
 - Older fee fields (`amount`, `balanceRate`, `transactionRate`, `accruedRate`) and newer ones (`fixedAmount`, `rateBased`, `variable`) map to the same columns.
+- Coded rate conditions (`applicabilityConditions`, e.g. `EXISTING_CUST`, `MIN_DEPOSITS`) of accepted rates go to `stg.rate_condition`.
 - A response without product id, category or name is held back whole. Every held-back value goes to `stg.reject` with its original value and reason.
 - Features and eligibility are not parsed yet; they remain in raw.
 
 **Alternatives considered:** Flattening in Python before the load (simpler to write, but the rules sit outside the data, rebuilding history needs the raw replies pulled back out, and a parsing error could stop the raw load); converting the percentage-writing brand by dividing by 100 (likely right, but rests on an inference about one bank's format).
 
-**Consequences:** Staging can be dropped and rebuilt from raw at any time. A parsing failure delays staging only. First build (28–30 October): 3,724 products, 10,980 lending rates, 10,934 deposit rates, 25,105 tiers, 37,440 fees, 1,332 discounts, 6,383 constraints; 120 rates held back (94 term deposit rates without a term, 12 above 1, 14 from products writing percentages, all of the latter two from Traditional Credit Union). Counts matched an independent Python recount. For the reporting layer: some rates are not generally available (Bankwest Easy Saver 11.5% for competition winners only), and one mortgage lists a deposit rate (The Capricornian, 9.23%); deposit rates should come from deposit products only and restricted rates should be kept out of "best rate" rankings.
+**Consequences:** Staging can be dropped and rebuilt from raw at any time. A parsing failure delays staging only. Build of 28–30 October: 3,707 products, 10,937 lending rates, 10,903 deposit rates, 25,116 tiers, 4,754 rate conditions, 37,358 fees, 1,332 discounts, 6,365 constraints; 120 rates held back (94 term deposit rates without a term, 12 above 1, 14 from products writing percentages, all of the latter two from Traditional Credit Union). Counts matched an independent Python recount. For the reporting layer: some rates are not generally available (Bankwest Easy Saver 11.5% for competition winners only), and one mortgage lists a deposit rate (The Capricornian, 9.23%); deposit rates should come from deposit products only and restricted rates should be kept out of "best rate" rankings.
 
 ## DR-005 — Database firewall access for the scheduled collector
 
@@ -95,7 +96,7 @@ Product list and detail endpoints use different versions (most brands: list v5, 
 - A list is complete only when the number of distinct `productId`s equals `totalRecords`. Repeated entries are collapsed before details are fetched; the raw list pages keep them as received.
 - List retries use page sizes 100, 99 and 98 (one large page avoids the faulty paging; each size is still a separate CDN cache entry).
 - Any failed list request, including on page 1, moves on to the next attempt. On 30 October AMP (HTTP 400) and Geelong Bank (HTTP 520) failed on page 1 in the scheduled run and returned their full lists a few hours later.
-- The 28 and 29 October snapshots for these brands are incomplete and are not repaired. The 30 October snapshot for Defence Bank, St.George, Westpac, AMP and Geelong Bank comes from a same-day re-run with these changes (Defence Bank 52 of 52 products, St.George 42 of 42).
+- The fix applies from 31 October; the 28–30 October snapshots for these brands are incomplete and are not repaired.
 
 **Alternatives considered:** A hard-coded version per bank and endpoint (breaks whenever a bank upgrades); cache-busting query parameters (non-standard parameters may be rejected); accepting a single response per bank (randomly drops Westpac-group brands).
 

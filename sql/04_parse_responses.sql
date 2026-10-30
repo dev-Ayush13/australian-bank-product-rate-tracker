@@ -35,7 +35,7 @@ DELETE d FROM #doc AS d WHERE NOT EXISTS (SELECT 1 FROM stg.product AS p WHERE p
 SELECT d.response_hash, k.kind, CAST(a.[key] AS smallint) AS rate_seq, COALESCE(r.lendingRateType, r.depositRateType) AS rate_type,
        TRY_CAST(r.rate AS decimal(12, 8)) AS rate, r.rate AS raw_rate, TRY_CAST(r.comparisonRate AS decimal(12, 8)) AS comparison_rate,
        r.loanPurpose, r.repaymentType, t.months, t.days, r.calculationFrequency, r.applicationType, r.applicationFrequency,
-       r.interestPaymentDue, r.additionalValue, r.additionalInfo, r.tiers,
+       r.interestPaymentDue, r.additionalValue, r.additionalInfo, r.tiers, r.applicabilityConditions AS conditions,
        CASE WHEN COALESCE(r.lendingRateType, r.depositRateType) IS NULL THEN 'missing rate type'
             WHEN TRY_CAST(r.rate AS decimal(12, 8)) IS NULL THEN 'rate is not a number'
             WHEN TRY_CAST(r.rate AS decimal(12, 8)) > 1 THEN 'rate above 1: looks like a percentage, not a fraction'
@@ -47,7 +47,8 @@ CROSS APPLY (VALUES ('L', JSON_QUERY(d.j, '$.data.lendingRates')), ('D', JSON_QU
 CROSS APPLY OPENJSON(k.arr) AS a
 CROSS APPLY OPENJSON(a.value) WITH (lendingRateType varchar(40), depositRateType varchar(40), rate varchar(40), comparisonRate varchar(40),
     loanPurpose varchar(30), repaymentType varchar(30), calculationFrequency varchar(20), applicationType varchar(20), applicationFrequency varchar(20),
-    interestPaymentDue varchar(20), additionalValue nvarchar(max), additionalInfo nvarchar(max), tiers nvarchar(max) AS JSON) AS r
+    interestPaymentDue varchar(20), additionalValue nvarchar(max), additionalInfo nvarchar(max), tiers nvarchar(max) AS JSON,
+    applicabilityConditions nvarchar(max) AS JSON) AS r
 OUTER APPLY stg.period(IIF(COALESCE(r.lendingRateType, r.depositRateType) IN ('FIXED', 'INTRODUCTORY'), r.additionalValue, NULL)) AS t;
 
 UPDATE r SET reason = 'product writes rates as percentages' FROM #rate AS r  -- its values of 1 or below would be misread
@@ -67,7 +68,7 @@ SELECT response_hash, IIF(kind = 'L', 'lending_rate', 'deposit_rate'), rate_seq,
        LEFT(IIF(reason LIKE 'term%', additionalValue, raw_rate), 400), reason
 FROM #rate WHERE reason IS NOT NULL;
 
---2c. Tiers of accepted rates; PERCENT values above 1 (80 rather than 0.8) are divided by 100
+--2c. Tiers and coded conditions of accepted rates; PERCENT tier values above 1 (80 rather than 0.8) are divided by 100
 INSERT stg.rate_tier
 SELECT r.response_hash, r.kind, r.rate_seq, a.[key], t.unitOfMeasure, v.mn / IIF(v.s = 1, 100, 1), v.mx / IIF(v.s = 1, 100, 1), v.s,
        t.rateApplicationMethod, t.name, t.additionalInfo
@@ -76,6 +77,12 @@ CROSS APPLY OPENJSON(a.value) WITH (name nvarchar(200), unitOfMeasure varchar(20
     rateApplicationMethod varchar(20), additionalInfo nvarchar(max)) AS t
 CROSS APPLY (SELECT mn, mx, IIF(t.unitOfMeasure = 'PERCENT' AND (mn > 1 OR mx > 1), 1, 0) AS s
              FROM (SELECT TRY_CAST(t.minimumValue AS decimal(20, 6)) AS mn, TRY_CAST(t.maximumValue AS decimal(20, 6)) AS mx) AS x) AS v
+WHERE r.reason IS NULL;
+
+INSERT stg.rate_condition
+SELECT r.response_hash, r.kind, r.rate_seq, a.[key], c.rateApplicabilityType, c.additionalValue, c.additionalInfo
+FROM #rate AS r CROSS APPLY OPENJSON(r.conditions) AS a
+CROSS APPLY OPENJSON(a.value) WITH (rateApplicabilityType varchar(40), additionalValue nvarchar(max), additionalInfo nvarchar(max)) AS c
 WHERE r.reason IS NULL;
 
 --2d. Fees and their discounts; newer versions use fixedAmount / rateBased / variable, older ones amount and balance/transaction/accrued rates

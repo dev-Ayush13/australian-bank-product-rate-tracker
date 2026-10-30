@@ -1,6 +1,6 @@
 --1. Schema; drop existing staging tables (children first), as staging is rebuilt from raw
 IF SCHEMA_ID('stg') IS NULL EXEC('CREATE SCHEMA stg');
-DROP TABLE IF EXISTS stg.fee_discount, stg.rate_tier, stg.lending_rate, stg.deposit_rate, stg.fee, stg.product_constraint, stg.reject, stg.product;
+DROP TABLE IF EXISTS stg.fee_discount, stg.rate_tier, stg.rate_condition, stg.lending_rate, stg.deposit_rate, stg.fee, stg.product_constraint, stg.reject, stg.product;
 GO
 
 --2. Tables: one row per distinct product detail response, and its rates, tiers, fees and constraints. Rates are fractions (0.0619 = 6.19%)
@@ -27,6 +27,11 @@ CREATE TABLE stg.rate_tier (
     unit_of_measure varchar(20), minimum_value decimal(20, 6), maximum_value decimal(20, 6), scaled_from_percent bit NOT NULL,
     rate_application_method varchar(20), tier_name nvarchar(200), additional_info nvarchar(max),
     PRIMARY KEY (response_hash, rate_kind, rate_seq, tier_seq));
+
+CREATE TABLE stg.rate_condition (
+    response_hash binary(32), rate_kind char(1) CHECK (rate_kind IN ('L', 'D')), rate_seq smallint, condition_seq smallint,
+    condition_type varchar(40), additional_value nvarchar(max), additional_info nvarchar(max),
+    PRIMARY KEY (response_hash, rate_kind, rate_seq, condition_seq));
 
 CREATE TABLE stg.fee (
     response_hash binary(32) REFERENCES stg.product, fee_seq smallint, name nvarchar(400) NOT NULL, fee_type varchar(30) NOT NULL,
