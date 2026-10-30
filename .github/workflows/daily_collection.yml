@@ -43,8 +43,8 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - name: Collect Register
-        run: python -u src/get_register.py
+      - name: Collect Register and RBA cash rate
+        run: python -u src/get_register.py && python -u src/get_cash_rate.py
 
       - name: Collect products
         run: python -u src/get_products.py

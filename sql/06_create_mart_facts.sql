@@ -80,7 +80,21 @@ OUTER APPLY (SELECT COUNT(*) AS rejects FROM raw.fetch_log AS f JOIN stg.reject 
              WHERE f.fetch_date = c.run_date AND f.source_id = c.brand_id) AS x;
 GO
 
---8. Check: rows per fact view
+--8. RBA cash rate target changes, read from the latest stored copy of RBA table A2 (rows look like "30-Sep-2026,+0.25,4.60,...");
+--   early-1990s targets given as ranges ("17.00 to 17.50") keep their text and have no numeric value
+CREATE OR ALTER VIEW mart.fact_cash_rate AS
+SELECT TRY_CONVERT(date, REPLACE(LEFT(l.value, 11), '-', ' '), 106) AS [date], TRY_CAST(c.change_text AS decimal(5, 2)) AS change,
+       TRY_CAST(c.target_text AS decimal(5, 2)) AS cash_rate_target, c.target_text
+FROM (SELECT TOP 1 CAST(DECOMPRESS(r.body_gzip) AS varchar(max)) AS txt FROM raw.fetch_log AS f JOIN raw.response AS r ON r.response_hash = f.response_hash
+      WHERE f.source_id = 'rba_a2' ORDER BY f.fetch_date DESC) AS a
+CROSS APPLY STRING_SPLIT(REPLACE(a.txt, CHAR(13), ''), CHAR(10)) AS l
+CROSS APPLY (SELECT MAX(IIF(s.ordinal = 2, s.value, NULL)) AS change_text, MAX(IIF(s.ordinal = 3, s.value, NULL)) AS target_text
+             FROM STRING_SPLIT(l.value, ',', 1) AS s) AS c
+WHERE l.value LIKE '[0-9][0-9]-[A-Z][a-z][a-z]-[0-9][0-9][0-9][0-9],%';
+GO
+
+--9. Check: rows per fact view
 SELECT 'fact_product_day' AS view_name, COUNT(*) AS row_count FROM mart.fact_product_day UNION ALL SELECT 'fact_lending_rate', COUNT(*) FROM mart.fact_lending_rate
 UNION ALL SELECT 'fact_deposit_rate', COUNT(*) FROM mart.fact_deposit_rate UNION ALL SELECT 'fact_segment_rate', COUNT(*) FROM mart.fact_segment_rate
-UNION ALL SELECT 'fact_account_fee', COUNT(*) FROM mart.fact_account_fee UNION ALL SELECT 'fact_collection', COUNT(*) FROM mart.fact_collection;
+UNION ALL SELECT 'fact_account_fee', COUNT(*) FROM mart.fact_account_fee UNION ALL SELECT 'fact_collection', COUNT(*) FROM mart.fact_collection
+UNION ALL SELECT 'fact_cash_rate', COUNT(*) FROM mart.fact_cash_rate;

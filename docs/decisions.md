@@ -14,7 +14,9 @@ Each significant design decision and data-source check, newest first.
 - `fact_segment_rate`: per product, segment and day, the best generally available rate (lowest for loans, highest for deposits) and its change since the previous collected day. Home loans are compared at standard LVR points (60, 70, 80, 90%): a rate counts at a point if its LVR range includes it. Days without data are skipped, so an outage never shows as a change.
 - A rate is restricted if its product is tailored, it is coded `EXISTING_CUST`, or its text mentions winner, competition, employee, selected customer or existing customer. Restricted rates stay in the facts, flagged, and are left out of `fact_segment_rate`.
 
-**Alternatives considered:** Materialised fact tables (faster for very large histories, but need refresh code and can drift from staging; can be adopted later if refreshes slow down); LVR bands taken from each tier's upper bound (mislabels ranges such as 0–70% as 60–70%).
+- RBA cash rate target changes come from RBA statistical table A2 (CSV, CC BY 4.0, attributed in the README), collected daily by `src/get_cash_rate.py` and stored like any raw reply (source `rba_a2`). `fact_cash_rate` reads the latest stored copy: 99 changes since January 1990, the latest 30 September 2026 (+0.25 to 4.60%). Dates are effective dates. Three early-1990 targets published as ranges keep their text without a numeric value. A2 lists changes only, not meetings with no change.
+
+**Alternatives considered:** Materialised fact tables (faster for very large histories, but need refresh code and can drift from staging; can be adopted later if refreshes slow down); LVR bands taken from each tier's upper bound (mislabels ranges such as 0–70% as 60–70%); entering cash rate decisions by hand (each new decision would have to be remembered); reading the RBA cash rate web page (includes unchanged meetings, but web page layouts change more often than statistical files).
 
 **Consequences:** No data is copied; the views always reflect staging. Row counts matched independent queries, and a Westpac fixed rate product traced from the view back to its raw reply matched rate by rate (140 rates).
 

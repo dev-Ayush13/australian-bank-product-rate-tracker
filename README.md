@@ -16,7 +16,7 @@ Tracks the products, interest rates and fees that every Australian bank publishe
 
 - Public Product Reference Data published by banks under the Consumer Data Right (no customer data).
 - The CDR Register, for the current list of banks and their public API addresses.
-- RBA cash rate history.
+- RBA cash rate target changes: statistical table A2, "Changes in Monetary Policy and Administered Rates". Source: Reserve Bank of Australia, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
 ## Architecture
 

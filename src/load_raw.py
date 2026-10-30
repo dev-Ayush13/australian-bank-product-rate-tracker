@@ -15,12 +15,13 @@ RAW_DIR = ROOT / "data" / "raw"
 
 run_date = sys.argv[1] if len(sys.argv) > 1 else f"{date.today():%Y-%m-%d}"
 day_dir = RAW_DIR / "products" / run_date
-register_file = RAW_DIR / "register" / f"{run_date}.json"
-
 summary = json.loads((day_dir / "_run_summary.json").read_text(encoding="utf-8"))
 log = json.loads((day_dir / "_fetch_log.json").read_text(encoding="utf-8"))
-log.append({"source_id": "cdr_register", "request_key": "brands/summary", "http_status": 200, "api_version": "2",
-            "fetched_at": f"{datetime.fromtimestamp(register_file.stat().st_mtime, timezone.utc):%Y-%m-%dT%H:%M:%SZ}", "file": register_file})
+for source_id, request_key, file, api_version in [("cdr_register", "brands/summary", RAW_DIR / "register" / f"{run_date}.json", "2"),
+                                                  ("rba_a2", "a2-data.csv", RAW_DIR / "rba" / f"{run_date}.csv", None)]:
+    if file.exists():  # the RBA file is collected from 30 Oct 2026
+        log.append({"source_id": source_id, "request_key": request_key, "http_status": 200, "api_version": api_version, "file": file,
+                    "fetched_at": f"{datetime.fromtimestamp(file.stat().st_mtime, timezone.utc):%Y-%m-%dT%H:%M:%SZ}"})
 
 
 def version(v):
