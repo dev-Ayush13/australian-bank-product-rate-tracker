@@ -84,7 +84,7 @@ Each significant design decision and data-source check, newest first.
 - 28 and 29 October were collected before the fetch log existed; a one-off script (`src/backfill_fetch_log.py`, removed after use; see commits `5fe0a4f` and `e8bc9a9`) rebuilt it from the saved files and run summaries. For those days: times are file times; versions are per brand; status codes of failed requests are blank where the summary recorded only the error type; failed list attempts before a successful retry are not recorded. On 28 October the summary of the last retest was merged into the full-run summary (original kept), and Revolut, which failed in the full run but was collected by an earlier retest whose summary was overwritten, was rebuilt from its files (11/11 products, 9 in scope).
 - First load (2026-10-28): 3,153 distinct responses (33.9 MB raw, 6.1 MB compressed), 3,165 fetch log rows (12 errors), 116 brands. Reloading the same day added no responses.
 - Second day (2026-10-29): 476 of 3,111 distinct responses were new; 85% were identical to the previous day.
-- The paused database can take longer than the 90-second login timeout to resume, so the loader retries the connection up to three times.
+- The paused database can take longer than the 90-second login timeout to resume, so the loader tries to connect up to five times, 30 seconds apart. Three attempts were not enough margin: on 2 November 2026 the database took about 2 minutes to resume and only the third attempt connected.
 
 ## DR-003 — Request settings for bank product APIs
 

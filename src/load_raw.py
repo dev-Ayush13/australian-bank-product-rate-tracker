@@ -52,12 +52,12 @@ conn_str = (
     "Pwd={" + os.environ["AZURE_SQL_PASSWORD"].replace("}", "}}") + "};"
     "Encrypt=yes;TrustServerCertificate=no;Connection Timeout=90;"
 )
-for attempt in range(1, 4):  # the first connection wakes a paused database and can time out
+for attempt in range(1, 6):  # the first connection wakes a paused database and can time out
     try:
         conn = pyodbc.connect(conn_str, autocommit=False)
         break
     except pyodbc.OperationalError as e:
-        if attempt == 3:
+        if attempt == 5:
             raise
         print(f"Connection attempt {attempt} failed ({str(e)[:60]}...), retrying in 30 s", flush=True)
         time.sleep(30)
