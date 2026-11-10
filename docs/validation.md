@@ -16,8 +16,10 @@ Every value that breaks a rule is kept in the data, handled as below, and listed
 | M4 | Placeholder dollar maximum ($50 million or more; real caps reach $20 million) | Treated as no cap | 240 (13) |
 | M5 | Discount between 3% and 5%, close to the 4% line of M1 | Review | 0 |
 | M6 | Margin discount without loan purpose or repayment type, so it cannot be matched to a rate | Not applied; review | 0 |
+| M7 | Savings headline taken from a total stated in the bank's bonus text ([DR-011](decisions.md#dr-011--savings-headline-rate)) | Stated total used | 5 (2) |
+| M8 | Bonus limited to new accounts or the first months, published as a bonus | Analysed as `INTRODUCTORY`, left out of the headline | 14 (8) |
 
-On 10 November 2026, after these rules: no home loan or deposit rate in the facts carries a dollar maximum of $50 million or more, the three implausible home loan rates (0.00%, 2.79%, 2.79%) are out of best-rate figures, and the cheapest Standard owner-occupied principal-and-interest variable rate at 80% LVR is 5.93%.
+On 10 November 2026, after these rules: no home loan or deposit rate in the facts carries a dollar maximum of $50 million or more, the three implausible home loan rates (0.00%, 2.79%, 2.79%) are out of best-rate figures, and the cheapest Standard owner-occupied principal-and-interest variable rate at 80% LVR is 5.93%. Savings headlines at $10,000 matched the expected values for the 11 accounts reviewed by hand (including Up 5.60%, NAB iSaver 1.85%, CommBank GoalSaver 5.25%); the highest is 6.01%.
 
 ## Weekly health check
 

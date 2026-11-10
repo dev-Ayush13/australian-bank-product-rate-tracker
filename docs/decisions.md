@@ -2,6 +2,23 @@
 
 Each significant design decision and data-source check, newest first.
 
+## DR-011 — Savings headline rate
+
+**Date:** 2026-11-10 · **Status:** Accepted
+
+**Context:** Q6 compares each savings account's headline rate (base plus bonus) with its base rate. Rates depend on the balance: on 4 November 2026, 91 accounts paid more at $50,000 than at $10,000 (stepped base rates), and 21 bonus accounts paid less at $250,000 (bonus caps). Most banks describe the bonus as paid "on top of" the base rate, but on 10 November 2026: 14 bonus rows at 8 banks were offers for new accounts or the first months (St.George, Bank of Melbourne and BankSA Maxi Saver, NAB iSaver, Westpac eSaver, Bank of Queensland Simple Saver, Defence Bank, Bank of China); Up stacks two bonuses ("Earn a total 5.60%", published as 2.00% and 3.60%); Bank of Queensland's Kids Savings Account publishes its total of 1.25% as the bonus; MyState Bank's bonus and bundle bonus are alternatives, not additions.
+
+**Decision:** `mart.fact_savings_headline` (`sql/06_create_mart_facts.sql`), per savings or transaction account, day and balance:
+- Balances $10,000 (default), $50,000 and $250,000 (the Financial Claims Scheme limit per account holder per bank and the most common bonus cap). A rate counts at a balance if its band includes it.
+- Headline = best base rate (`VARIABLE`) + best ongoing bonus (`BONUS` or `BUNDLE_BONUS`). If a bonus text states a total ("total … X%") that is not below the bonus, that total is the headline.
+- A bonus whose text says "first … month", "newly opened" or "new … customers only" is introductory: analysed as `INTRODUCTORY` and left out, like introductory rates. Restricted and implausible rates are left out.
+- Accounts that publish only fixed-term rates have no headline (farm management deposits, capital guaranteed super and pension accounts, a term deposit filed as a savings account, and two banks that publish base rates as fixed).
+- The bonus gap for Q6 is headline minus base rate. Exceptions M7 (stated total used) and M8 (introductory bonus published as a bonus) are listed in `fact_data_exception`.
+
+**Alternatives considered:** One balance only (hides stepped rates and caps); highest base plus highest bonus at any balance (combines rates that never apply together); adding every bonus (MyState Bank would reach 10.45%); ignoring stacked bonuses (Up understated by 2.00 percentage points).
+
+**Consequences:** On 10 November 2026: 653, 655 and 653 accounts have a headline at $10,000, $50,000 and $250,000, of which 110, 109 and 106 have a bonus; stated totals are used for 2 accounts. At $10,000 the highest headline is 6.01% (RACQ Bank Bonus Saver Account); NAB iSaver shows its 1.85% base rate instead of a 5.50% four-month offer; Up shows 5.60%; Bank of Queensland's Kids Savings Account 1.25%. With this decision the reporting rules are complete as version 1 (DR-010).
+
 ## DR-010 — Data quality policy and unattended operation
 
 **Date:** 2026-11-10 · **Status:** Accepted
