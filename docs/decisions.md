@@ -2,6 +2,31 @@
 
 Each significant design decision and data-source check, newest first.
 
+## DR-009 — Home loan types for market comparisons
+
+**Date:** 2026-11-10 · **Status:** Accepted
+
+**Context:** The cheapest home loan rates in the market were special-purpose products: a 0.00% Northern Territory fee assistance loan (People First and Heritage Bank), a 2.79% loan for clean energy products (RACQ Bank), a 3.25% veterans-only loan and a 4.74% upgrades loan (Westpac). Bridging, land, line-of-credit and reverse mortgage loans (7.44–10.90%) sit in the same product category and raise market medians.
+
+**Decision:** `mart.dim_product` classifies each home loan by keywords in its latest name (`sql/05_create_mart_dimensions.sql`), first match wins:
+
+| `loan_type` | Name contains | Products on 10 Nov 2026 |
+|---|---|---|
+| Special eligibility | veteran, defence force | 2 |
+| Assistance or add-on | assist, upgrade | 4 |
+| Green | green, clean energy, starts with "ECO " | 14 |
+| Bridging | bridging | 26 |
+| Land | land loan | 5 |
+| Line of credit | line of credit | 5 |
+| Reverse mortgage | reverse mortgage | 2 |
+| Standard | none of the above | 1,385 |
+
+Facts keep every product; market comparisons (cheapest, medians, big four against the market) use `Standard` only. All green-named loans are grouped together: only RACQ's description shows a non-standard purpose, but the group is consistent with leaving conditional green discounts out of rate comparisons (DR-008), and its other rates (6.09–6.80%) are ordinary. Construction and first home buyer loans stay Standard.
+
+**Alternatives considered:** A hand-kept list of product ids (exact, but misses new products); a floor such as the cash rate (4.74% was above the cash rate before 4 November 2026); excluding only RACQ among green loans (needs a description check for one bank).
+
+**Consequences:** On 10 November 2026 the cheapest Standard owner-occupied principal-and-interest variable rate at 80% LVR is 5.93% (Southern Cross Credit Union), and no Standard home loan has a generally available rate below 5.90%. The keyword list is checked again whenever the EDA is re-run.
+
 ## DR-008 — Discounts and promotional rates in home loan comparisons
 
 **Date:** 2026-11-10 · **Status:** Accepted

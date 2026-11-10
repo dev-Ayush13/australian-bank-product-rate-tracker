@@ -22,7 +22,8 @@ FROM b LEFT JOIN (VALUES
 WHERE b.rn = 1;
 GO
 
---3. Products: one row per bank and product, with its latest name and the first and last day it was offered
+--3. Products: one row per bank and product, with its latest name and the first and last day it was offered. Home loans get a loan type from
+--   keywords in the name (list checked by hand against 10 Nov 2026 names); market comparisons use Standard only
 CREATE OR ALTER VIEW mart.dim_product AS
 WITH p AS (
     SELECT f.source_id AS brand_id, s.product_id, s.name, s.product_category, s.is_tailored, f.fetch_date,
@@ -30,7 +31,17 @@ WITH p AS (
            MIN(f.fetch_date) OVER (PARTITION BY f.source_id, s.product_id) AS first_seen
     FROM raw.fetch_log AS f JOIN stg.product AS s ON s.response_hash = f.response_hash
     WHERE f.error IS NULL)
-SELECT CONCAT(brand_id, '|', product_id) AS product_key, brand_id, product_id, name, product_category, is_tailored, first_seen, fetch_date AS last_seen
+SELECT CONCAT(brand_id, '|', product_id) AS product_key, brand_id, product_id, name, product_category,
+       CASE WHEN product_category <> 'RESIDENTIAL_MORTGAGES' THEN NULL
+            WHEN name LIKE '%veteran%' OR name LIKE '%defence force%' THEN 'Special eligibility'
+            WHEN name LIKE '%assist%' OR name LIKE '%upgrade%' THEN 'Assistance or add-on'
+            WHEN name LIKE '%green%' OR name LIKE '%clean energy%' OR name LIKE 'eco %' THEN 'Green'
+            WHEN name LIKE '%bridging%' THEN 'Bridging'
+            WHEN name LIKE '%land loan%' THEN 'Land'
+            WHEN name LIKE '%line of credit%' THEN 'Line of credit'
+            WHEN name LIKE '%reverse mortgage%' THEN 'Reverse mortgage'
+            ELSE 'Standard' END AS loan_type,
+       is_tailored, first_seen, fetch_date AS last_seen
 FROM p WHERE rn = 1;
 GO
 
@@ -42,5 +53,6 @@ FROM (SELECT MIN(fetch_date) AS first_day, MAX(fetch_date) AS last_day FROM raw.
 CROSS APPLY (SELECT DATEADD(day, value, r.first_day) AS [date] FROM GENERATE_SERIES(0, DATEDIFF(day, r.first_day, r.last_day))) AS d;
 GO
 
---5. Check: every listed name matches a Register brand when Big four = 13 and Peer = 14
+--5. Checks: every listed name matches a Register brand when Big four = 13 and Peer = 14; home loan products by loan type
 SELECT segment, COUNT(*) AS brands FROM mart.dim_bank GROUP BY segment;
+SELECT loan_type, COUNT(*) AS products FROM mart.dim_product WHERE product_category = 'RESIDENTIAL_MORTGAGES' GROUP BY loan_type ORDER BY products DESC;
