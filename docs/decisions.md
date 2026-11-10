@@ -2,6 +2,24 @@
 
 Each significant design decision and data-source check, newest first.
 
+## DR-010 — Data quality policy and unattended operation
+
+**Date:** 2026-11-10 · **Status:** Accepted
+
+**Context:** The collector must run for months without daily attention so that rate history builds up (Q1 and Q2 rely on the 4 November 2026 cash rate rise and later decisions). Real product data keeps producing new quirks (a bank leaving the Register, terms written as ranges, rates published in the wrong field). Scheduled runs started 3–7 hours late between 30 October and 10 November 2026, and a dropped run cannot be recovered later.
+
+**Decision:**
+- **Scope:** the big four and peer group are reported in detail; the rest of the market feeds benchmarks only (cheapest, median). Products in scope: standard home loans at the LVR points, savings accounts at $10,000 / $50,000 / $250,000, term deposits by term.
+- **Generic rules only:** values that fail a check (format, field misuse, plausibility, placeholder) are flagged, kept, and left out of comparisons; no rule is written for a single bank.
+- **Materiality:** a rule changes only if a day of data would be lost, a big four or peer group bank's figures are wrong, or a reported market figure (segment cheapest or median) moves by 0.10 percentage points or more. Anything else is recorded as an exception.
+- **Fix forward:** raw data is never edited; staging can be rebuilt; rules live in views and re-apply to the whole history. Rules are versioned and frozen after the first full set.
+- **Unattended runs:** a second schedule at 03:17 UTC (8 hours after the 19:17 UTC run) collects only if the Sydney day has no successful run yet. The check uses the GitHub API, not the database. Manual runs always collect. Raw files are kept as a workflow artifact for 90 days.
+- **Review:** failed runs are emailed by GitHub; a weekly review checks run outcomes, new exception types and the completeness of big four and peer group data.
+
+**Alternatives considered:** Investigating every new quirk when it appears (does not scale for an unattended collector); a manual run when the scheduled run is more than 8 hours late (depends on someone watching); a guard that checks the database (wakes it a second time each day); keeping artifacts for 7 days (a missed weekly review could lose a day).
+
+**Consequences:** Daily operation needs no attention unless GitHub reports a failure. Free database use on 1–10 November 2026 was 8,309 of 100,000 vCore seconds: about 420 for an unattended day and 1,900–2,900 for a day with working sessions. Artifacts for 90 days take about 0.5 GB.
+
 ## DR-009 — Home loan types for market comparisons
 
 **Date:** 2026-11-10 · **Status:** Accepted
@@ -106,7 +124,7 @@ From 5 November 2026 Newcastle Permanent writes term deposit terms as ranges (`P
 - User-assigned managed identity with a federated credential (`infra/setup_github_access.sh`). GitHub's OIDC subject includes the owner and repository IDs (`repo:dev-Ayush13@26853697/australian-bank-product-rate-tracker@1436536342:ref:refs/heads/main`); a subject without the IDs was rejected (AADSTS700213). With the IDs, a recreated repository of the same name is not trusted.
 - Custom role with only `Microsoft.Sql/servers/firewallRules/read|write|delete`, assigned on the SQL server.
 - The workflow loads as a database user `loader` (`sql/02_create_loader_user.sql`): SELECT and INSERT on schema `raw`, DELETE on `raw.fetch_log` and `raw.collection_run` only. The admin login is not used by the workflow.
-- The workflow signs in to Azure after collection, so the firewall rule exists only during the load. Raw files are kept as a workflow artifact for 7 days, so a failed load can be loaded by hand.
+- The workflow signs in to Azure after collection, so the firewall rule exists only during the load. Raw files are kept as a workflow artifact, so a failed load can be loaded by hand (90 days since 10 November 2026, DR-010).
 - First successful run (2026-10-29): 81 minutes; the first database connection timed out while the database resumed and the retry succeeded; the rule was deleted at the end.
 
 ## DR-004 — Raw response storage

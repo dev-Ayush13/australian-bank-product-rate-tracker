@@ -3,11 +3,13 @@ name: Daily collection
 on:
   schedule:
     - cron: "17 19 * * *"  # 19:17 UTC = early morning in Sydney; off the hour, when GitHub queues are busy
+    - cron: "17 3 * * *"   # fallback 8 h later: collects only if the day has no successful run yet
   workflow_dispatch:
 
 permissions:
   id-token: write  # OIDC token for the Azure login (DR-005)
   contents: read
+  actions: read    # the guard reads today's earlier runs
 
 concurrency:
   group: daily-collection
@@ -21,7 +23,22 @@ env:
   AZURE_SQL_USER: loader
 
 jobs:
+  guard:  # a scheduled run skips a Sydney day that already has a successful run; manual runs always collect
+    runs-on: ubuntu-24.04
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          since=$(date -u -d "@$(date -d "$(date +%F)" +%s)" +%FT%TZ)  # Sydney midnight in UTC
+          ok_runs=$(gh run list -R "$GITHUB_REPOSITORY" -w daily_collection.yml -s success --created ">=$since" --json databaseId -q length || echo 0)  # API error: collect anyway
+          echo "skip=$([ "$GITHUB_EVENT_NAME" = schedule ] && [ "$ok_runs" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
   collect-and-load:
+    needs: guard
+    if: needs.guard.outputs.skip != 'true'
     runs-on: ubuntu-24.04  # pinned: the ODBC driver package must exist for the Ubuntu version
     timeout-minutes: 150
     steps:
@@ -49,13 +66,13 @@ jobs:
       - name: Collect products
         run: python -u src/get_products.py
 
-      - name: Keep raw files for 7 days (to reload by hand if the load fails)
+      - name: Keep raw files for 90 days (to reload by hand if the load fails)
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: raw-${{ github.run_id }}
           path: data/raw/
-          retention-days: 7
+          retention-days: 90
 
       - uses: azure/login@v3
         with:
