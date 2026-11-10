@@ -8,10 +8,11 @@ GO
 
 --2. Each parsed rate once: tier bounds, LVR range label, condition codes and whether it is restricted (not generally available).
 --   DISCOUNT under 4% is a margin off a variable rate (an adjustment, not a rate); 4% or more is a promotional rate published as a discount,
---   analysed as INTRODUCTORY
+--   analysed as INTRODUCTORY. BUNDLE_DISCOUNT_VARIABLE of 4% or more is a package rate published as a discount, analysed as VARIABLE
 CREATE OR ALTER VIEW mart.rate_detail AS
 SELECT r.response_hash, r.kind, r.rate_seq, r.rate_type, r.rate, r.comparison_rate, r.loan_purpose, r.repayment_type, r.term_months, r.term_days,
-       IIF(r.rate_type = 'DISCOUNT' AND r.rate >= 0.04, 'INTRODUCTORY', r.rate_type) AS analysis_type,
+       CASE WHEN r.rate_type = 'DISCOUNT' AND r.rate >= 0.04 THEN 'INTRODUCTORY'
+            WHEN r.rate_type = 'BUNDLE_DISCOUNT_VARIABLE' AND r.rate >= 0.04 THEN 'VARIABLE' ELSE r.rate_type END AS analysis_type,
        IIF(r.rate_type = 'DISCOUNT' AND r.rate < 0.04, 1, 0) AS is_adjustment,
        x.lvr_min, x.lvr_max, x.amount_min, x.amount_max, c.condition_codes,
        CASE WHEN r.kind = 'D' THEN NULL WHEN x.lvr_min IS NULL AND x.lvr_max IS NULL THEN 'Any'
