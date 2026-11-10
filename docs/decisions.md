@@ -2,6 +2,27 @@
 
 Each significant design decision and data-source check, newest first.
 
+## DR-008 — Discounts and promotional rates in home loan comparisons
+
+**Date:** 2026-11-10 · **Status:** Accepted
+
+**Context:** On 10 November 2026, 8 banks published `DISCOUNT` rates on 34 home loan products, in three patterns:
+- A reference rate minus a margin discount by LVR band: Great Southern Bank (8.45% less 1.16–2.06%, plus variants for an extended loan term and an additional 0.05% "Green Home" offer) and People First and Heritage Bank (8.43% less 1.69–2.19%). The resulting rates sit just under the published comparison rates (8.45 − 2.06 = 6.39% against 6.45%; 8.43 − 2.19 = 6.24% against 6.25%).
+- A small campaign discount across a loan type: CommBank, 0.10%.
+- The full promotional rate written as a "discount" (5.70–6.74%): Arab Bank ("Discount Rate 6.40% represents a discount of 3.14% off our … standard variable rate of 9.54%"), Horizon Bank ("for the first 2 years only"), SWSbank, The Mac and Laboratories Credit Union.
+
+Treating discount rows as rates made reference-rate banks look 1.5–2 percentage points dearer than they are and mixed margins into rate statistics.
+
+**Decision:** In `sql/06_create_mart_facts.sql`:
+- A `DISCOUNT` under 4% is an adjustment (`is_adjustment = 1`), not a rate. In `fact_segment_rate` a variable rate is reduced by the largest generally available discount of the same product, loan purpose, repayment type and LVR point. Discounts do not stack.
+- A `DISCOUNT` of 4% or more is a promotional rate published in the wrong field; it is analysed as `INTRODUCTORY` (`analysis_type`), kept but outside the best ongoing variable rate. Genuine margins reached 2.80% and promotional rates started at 5.70%, so 4% sits in a wide gap.
+- Discounts are not applied to fixed rates: People First and Heritage Bank's 0.40% fixed-rate discount is for LVR up to 80%, but its fixed rates are published only above 80%.
+- `fact_lending_rate` keeps the published `lending_rate_type` alongside `analysis_type` and `is_adjustment`.
+
+**Alternatives considered:** Subtracting every matching discount (gives about 0% for the promotional pattern and stacks conditional offers); pairing discounts with rates by their text (bank-specific); treating promotional "discounts" as variable rates (honeymoon rates would rank as the cheapest ongoing rates).
+
+**Consequences:** On 10 November 2026: home loan `DISCOUNT` segment rows 120 → 0, `INTRODUCTORY` 76 → 104 (the 28 promotional rows at their LVR points); variable and fixed segment counts unchanged. Discounts applied: CommBank 0.10% (16 segments), Great Southern Bank 1.06–2.44% (48), People First and Heritage Bank 1.69–2.80% (22). Great Southern Bank's best owner-occupied principal-and-interest variable rate at 80% LVR moved from 8.25% to 6.49%. No effective rate was more than 0.5 percentage points below the lowest comparison rate of its product, purpose, repayment type and LVR point. Every discount row named its loan purpose and repayment type, so matching uses equal values.
+
 ## DR-007 — Reporting layer (mart)
 
 **Date:** 2026-10-30 · **Status:** Accepted
@@ -38,6 +59,8 @@ Each significant design decision and data-source check, newest first.
 **Alternatives considered:** Flattening in Python before the load (simpler to write, but the rules sit outside the data, rebuilding history needs the raw replies pulled back out, and a parsing error could stop the raw load); converting the percentage-writing brand by dividing by 100 (likely right, but rests on an inference about one bank's format).
 
 **Consequences:** Staging can be dropped and rebuilt from raw at any time. A parsing failure delays staging only. Build of 28–30 October: 3,707 products, 10,937 lending rates, 10,903 deposit rates, 25,116 tiers, 4,754 rate conditions, 37,358 fees, 1,332 discounts, 6,365 constraints; 120 rates held back (94 term deposit rates without a term, 12 above 1, 14 from products writing percentages, all of the latter two from Traditional Credit Union). Counts matched an independent Python recount. For the reporting layer: some rates are not generally available (Bankwest Easy Saver 11.5% for competition winners only), and one mortgage lists a deposit rate (The Capricornian, 9.23%); deposit rates should come from deposit products only and restricted rates should be kept out of "best rate" rankings.
+
+From 5 November 2026 Newcastle Permanent writes term deposit terms as ranges (`P76D - P105D`), which are not ISO 8601 durations; its 22 term deposit rates are held back as "term deposit rate without a term". They are reported as a data-quality finding rather than parsed (10 November 2026).
 
 ## DR-005 — Database firewall access for the scheduled collector
 

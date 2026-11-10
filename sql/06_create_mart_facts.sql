@@ -6,9 +6,13 @@ FROM raw.fetch_log AS f JOIN stg.product AS p ON p.response_hash = f.response_ha
 WHERE f.error IS NULL;
 GO
 
---2. Each parsed rate once: tier bounds, LVR range label, condition codes and whether it is restricted (not generally available)
+--2. Each parsed rate once: tier bounds, LVR range label, condition codes and whether it is restricted (not generally available).
+--   DISCOUNT under 4% is a margin off a variable rate (an adjustment, not a rate); 4% or more is a promotional rate published as a discount,
+--   analysed as INTRODUCTORY
 CREATE OR ALTER VIEW mart.rate_detail AS
 SELECT r.response_hash, r.kind, r.rate_seq, r.rate_type, r.rate, r.comparison_rate, r.loan_purpose, r.repayment_type, r.term_months, r.term_days,
+       IIF(r.rate_type = 'DISCOUNT' AND r.rate >= 0.04, 'INTRODUCTORY', r.rate_type) AS analysis_type,
+       IIF(r.rate_type = 'DISCOUNT' AND r.rate < 0.04, 1, 0) AS is_adjustment,
        x.lvr_min, x.lvr_max, x.amount_min, x.amount_max, c.condition_codes,
        CASE WHEN r.kind = 'D' THEN NULL WHEN x.lvr_min IS NULL AND x.lvr_max IS NULL THEN 'Any'
             ELSE CONCAT(CAST(ROUND(COALESCE(x.lvr_min, 0) * 100, 0) AS int),
@@ -31,8 +35,8 @@ GO
 
 --3. Home loan rates per day
 CREATE OR ALTER VIEW mart.fact_lending_rate AS
-SELECT d.[date], d.brand_id, d.product_key, r.rate_seq, r.rate_type AS lending_rate_type, r.rate, r.comparison_rate, r.loan_purpose, r.repayment_type,
-       r.term_months, r.lvr_min, r.lvr_max, r.lvr_range, r.amount_min, r.amount_max, r.condition_codes, r.is_restricted
+SELECT d.[date], d.brand_id, d.product_key, r.rate_seq, r.rate_type AS lending_rate_type, r.analysis_type, r.is_adjustment, r.rate, r.comparison_rate,
+       r.loan_purpose, r.repayment_type, r.term_months, r.lvr_min, r.lvr_max, r.lvr_range, r.amount_min, r.amount_max, r.condition_codes, r.is_restricted
 FROM mart.fact_product_day AS d JOIN mart.rate_detail AS r ON r.response_hash = d.response_hash AND r.kind = 'L'
 WHERE d.product_category = 'RESIDENTIAL_MORTGAGES';
 GO
@@ -46,17 +50,24 @@ WHERE d.product_category <> 'RESIDENTIAL_MORTGAGES';
 GO
 
 --5. Best generally available rate per product and segment per day (lowest for loans, highest for deposits), with the change since the previous
---   collected day. Home loans are compared at standard LVR points: a rate counts at 80% if its LVR range includes 80%
+--   collected day. Home loans are compared at standard LVR points: a rate counts at 80% if its LVR range includes 80%. A variable rate is
+--   reduced by the largest margin discount for the same product, purpose, repayment type and LVR point (discounts don't stack)
 CREATE OR ALTER VIEW mart.fact_segment_rate AS
-WITH s AS (
-    SELECT d.[date], d.brand_id, d.product_key, r.kind, r.rate_type, r.loan_purpose, r.repayment_type, r.term_months, r.term_days, v.lvr_point,
-           IIF(r.kind = 'L', MIN(r.rate), MAX(r.rate)) AS rate
+WITH pts AS (
+    SELECT d.[date], d.brand_id, d.product_key, d.product_category, r.kind, r.analysis_type, r.rate, r.loan_purpose, r.repayment_type,
+           r.term_months, r.term_days, r.is_restricted, r.is_adjustment, v.lvr_point,
+           MAX(IIF(r.is_adjustment = 1 AND r.is_restricted = 0, r.rate, NULL))
+               OVER (PARTITION BY d.[date], d.product_key, r.loan_purpose, r.repayment_type, v.lvr_point) AS discount
     FROM mart.fact_product_day AS d JOIN mart.rate_detail AS r ON r.response_hash = d.response_hash
     CROSS APPLY (SELECT p AS lvr_point FROM (VALUES (0.6), (0.7), (0.8), (0.9)) AS t (p)
                  WHERE r.kind = 'L' AND (r.lvr_min IS NULL OR r.lvr_min <= p) AND (r.lvr_max IS NULL OR p <= r.lvr_max)
-                 UNION ALL SELECT NULL WHERE r.kind = 'D') AS v
-    WHERE r.is_restricted = 0 AND IIF(d.product_category = 'RESIDENTIAL_MORTGAGES', 'L', 'D') = r.kind
-    GROUP BY d.[date], d.brand_id, d.product_key, r.kind, r.rate_type, r.loan_purpose, r.repayment_type, r.term_months, r.term_days, v.lvr_point)
+                 UNION ALL SELECT NULL WHERE r.kind = 'D') AS v),
+s AS (
+    SELECT [date], brand_id, product_key, kind, analysis_type AS rate_type, loan_purpose, repayment_type, term_months, term_days, lvr_point,
+           IIF(kind = 'L', MIN(rate - IIF(analysis_type = 'VARIABLE', COALESCE(discount, 0), 0)), MAX(rate)) AS rate
+    FROM pts
+    WHERE is_restricted = 0 AND is_adjustment = 0 AND IIF(product_category = 'RESIDENTIAL_MORTGAGES', 'L', 'D') = kind
+    GROUP BY [date], brand_id, product_key, kind, analysis_type, loan_purpose, repayment_type, term_months, term_days, lvr_point)
 SELECT *, LAG([date]) OVER w AS previous_date, LAG(rate) OVER w AS previous_rate, rate - LAG(rate) OVER w AS change
 FROM s
 WINDOW w AS (PARTITION BY product_key, kind, rate_type, loan_purpose, repayment_type, term_months, term_days, lvr_point ORDER BY [date]);
