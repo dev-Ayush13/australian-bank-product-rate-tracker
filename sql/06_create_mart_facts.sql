@@ -10,6 +10,7 @@ GO
 --   DISCOUNT under 4% is a margin off a variable rate (an adjustment, not a rate); 4% or more is a promotional rate published as a discount,
 --   analysed as INTRODUCTORY. BUNDLE_DISCOUNT_VARIABLE of 4% or more is a package rate published as a discount, analysed as VARIABLE.
 --   Implausible rates (home loans below 3% or above 15%, deposits above 10%) are flagged; a dollar maximum of $50m or more means no cap.
+--   Several tiers of one unit on a rate are read as one band, from the lowest minimum to the highest maximum (no cap if any tier is open).
 --   A deposit bonus limited to new accounts or the first months is analysed as INTRODUCTORY; stated_total is the total rate a bonus text
 --   states ("total ... X%")
 CREATE OR ALTER VIEW mart.rate_detail AS
@@ -39,10 +40,12 @@ OUTER APPLY (SELECT TRY_CAST(RIGHT(s.seg, CHARINDEX(' ', REVERSE(s.seg) + ' ') -
              FROM (SELECT RTRIM(SUBSTRING(r.info, t.pos, IIF(t.pct > t.pos, t.pct - t.pos, 0))) AS seg
                    FROM (SELECT CHARINDEX('total', r.info) AS pos, CHARINDEX('%', r.info, CHARINDEX('total', r.info)) AS pct) AS t
                    WHERE r.rate_type IN ('BONUS', 'BUNDLE_BONUS') AND t.pos > 0 AND t.pct > t.pos) AS s) AS st
-OUTER APPLY (SELECT MAX(IIF(unit_of_measure = 'PERCENT', minimum_value, NULL)) AS lvr_min, MAX(IIF(unit_of_measure = 'PERCENT', maximum_value, NULL)) AS lvr_max,
-                    MAX(IIF(unit_of_measure = 'DOLLAR', minimum_value, NULL)) AS amount_min,
-                    MAX(IIF(unit_of_measure = 'DOLLAR' AND maximum_value < 50000000, maximum_value, NULL)) AS amount_max
-             FROM stg.rate_tier AS t WHERE t.response_hash = r.response_hash AND t.rate_kind = r.kind AND t.rate_seq = r.rate_seq) AS x
+OUTER APPLY (SELECT MAX(IIF(u.unit_of_measure = 'PERCENT', u.lo, NULL)) AS lvr_min, MAX(IIF(u.unit_of_measure = 'PERCENT', u.hi, NULL)) AS lvr_max,
+                    MAX(IIF(u.unit_of_measure = 'DOLLAR', u.lo, NULL)) AS amount_min, MAX(IIF(u.unit_of_measure = 'DOLLAR', u.hi, NULL)) AS amount_max
+             FROM (SELECT unit_of_measure, IIF(COUNT(*) > COUNT(minimum_value), NULL, MIN(minimum_value)) AS lo,
+                          IIF(COUNT(*) > COUNT(IIF(unit_of_measure = 'DOLLAR' AND maximum_value >= 50000000, NULL, maximum_value)), NULL, MAX(maximum_value)) AS hi
+                   FROM stg.rate_tier AS t WHERE t.response_hash = r.response_hash AND t.rate_kind = r.kind AND t.rate_seq = r.rate_seq
+                   GROUP BY unit_of_measure) AS u) AS x
 OUTER APPLY (SELECT STRING_AGG(condition_type, ', ') WITHIN GROUP (ORDER BY condition_type) AS condition_codes
              FROM (SELECT DISTINCT condition_type FROM stg.rate_condition AS rc
                    WHERE rc.response_hash = r.response_hash AND rc.rate_kind = r.kind AND rc.rate_seq = r.rate_seq) AS d) AS c;
@@ -158,7 +161,11 @@ CROSS APPLY (SELECT 'M1' AS rule_id WHERE r.rate_type = 'DISCOUNT' AND r.rate >=
 UNION ALL
 SELECT d.[date], d.brand_id, d.product_key, 'M4', CONCAT('dollar maximum ', CAST(t.maximum_value AS decimal(20, 2)))
 FROM mart.fact_product_day AS d JOIN stg.rate_tier AS t ON t.response_hash = d.response_hash
-WHERE t.unit_of_measure = 'DOLLAR' AND t.maximum_value >= 50000000;
+WHERE t.unit_of_measure = 'DOLLAR' AND t.maximum_value >= 50000000
+UNION ALL
+SELECT d.[date], d.brand_id, d.product_key, 'M9', CONCAT(t.unit_of_measure, ' tiers on rate ', t.rate_kind, t.rate_seq, ': ', COUNT(*), ', read as one band')
+FROM mart.fact_product_day AS d JOIN stg.rate_tier AS t ON t.response_hash = d.response_hash
+GROUP BY d.[date], d.brand_id, d.product_key, t.rate_kind, t.rate_seq, t.unit_of_measure HAVING COUNT(*) > 1;
 GO
 
 --11. Check: rows per fact view

@@ -2,6 +2,18 @@
 
 Each significant design decision and data-source check, newest first.
 
+## DR-012 — Rates published with several tiers of one unit
+
+**Date:** 2026-11-10 · **Status:** Accepted (reporting rules version 1.1)
+
+**Context:** Some banks publish one rate with several tiers of the same unit: IMB Bank's 0.01% base rate has five balance tiers from $0 upwards; AMP's variable rate has LVR tiers of 0–50% and 50–60%. The views read a rate's band as the largest tier minimum and the largest tier maximum, which gives an impossible band when there are several tiers (IMB Bank: $100,000 to $99,999). On 10 November 2026 this affected 42 rates (39 deposit, 3 home loan) at 8 banks. Their tiers sit end to end (the largest gap is $1) or repeat the same tier. 16 savings accounts had no base rate at any standard balance, including one at Great Southern Bank Business+ (peer group), and the peer group median savings headline at $10,000 was 0.15 percentage points too low: both over the materiality threshold of DR-010.
+
+**Decision:** In `mart.rate_detail` (`sql/06_create_mart_facts.sql`), several tiers of one unit on a rate are read as one band, from the lowest minimum to the highest maximum. If any tier has no minimum or no maximum, or a placeholder dollar maximum of $50 million or more, that end of the band is open. Rates with one tier per unit are unchanged. Each such rate is listed as exception M9.
+
+**Alternatives considered:** Keep reporting rules version 1 and record the accounts as exceptions (a peer group account and the peer median stay wrong); one row per tier (changes the grain of every rate view for 42 rates).
+
+**Consequences:** On 10 November 2026: savings accounts with a compared base rate but none at a standard balance fell from 16 to 2 (both publish their base rate only outside the standard balances); 666, 667 and 666 accounts have a headline at $10,000, $50,000 and $250,000 (653, 655 and 653 before); the Great Southern Bank Business+ account shows 5.40% at every balance; the peer group median headline at $10,000 rose from 3.50% to 3.65%; the market median stayed at 1.65% at $10,000 and moved from 1.90% to 1.85% at $50,000. Home loan comparison points and the other fact views' row counts are unchanged; AMP's LVR label reads 0–60% instead of 50–60%. The single band assumes tiers are contiguous, which held for every case on 10 November.
+
 ## DR-011 — Savings headline rate
 
 **Date:** 2026-11-10 · **Status:** Accepted
